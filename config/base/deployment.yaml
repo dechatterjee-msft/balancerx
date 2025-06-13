@@ -1,0 +1,113 @@
+# -----------------------
+# 1. Namespace
+# -----------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: balancerx-system
+  labels:
+    app.kubernetes.io/name: balancerx
+
+---
+# -----------------------
+# 2. ServiceAccount
+# -----------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: balancerx-sa
+  namespace: balancerx-system
+
+---
+# -----------------------
+# 3. ClusterRole
+# -----------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: balancerx-role
+rules:
+  # Access to the target CRD (examplejobs.mygroup.io)
+  - apiGroups: ["mygroup.io"]
+    resources: ["examplejobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Read namespaces for discovery
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Allow writing Events (optional but useful)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+
+---
+# -----------------------
+# 4. ClusterRoleBinding
+# -----------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: balancerx-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: balancerx-role
+subjects:
+  - kind: ServiceAccount
+    name: balancerx-sa
+    namespace: balancerx-system
+
+---
+# -----------------------
+# 5. Deployment
+# -----------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: balancerx
+  namespace: balancerx-system
+  labels:
+    app.kubernetes.io/name: balancerx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: balancerx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: balancerx
+    spec:
+      serviceAccountName: balancerx-sa
+      containers:
+        - name: balancerx
+          image: balancerx:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--group=mygroup.io"
+            - "--version=v1"
+            - "--resource=examplejobs"
+            - "--balancer=ringhash"
+            - "--ns-label=balancer/worker=true"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          env:
+            - name: TZ
+              value: "UTC"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
