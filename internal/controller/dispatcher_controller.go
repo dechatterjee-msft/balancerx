@@ -1,7 +1,7 @@
 package controller
 
 import (
-	"balancerx/pkg/balancer"
+	"balancerx/internal/balancer"
 	"context"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"

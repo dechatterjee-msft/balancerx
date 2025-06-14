@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- balancerx_v1alpha1_balancerpolicy.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples

@@ -1,7 +1,7 @@
 package controller
 
 import (
-	"balancerx/pkg/balancer"
+	"balancerx/internal/balancer"
 	"context"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
