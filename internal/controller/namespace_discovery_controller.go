@@ -45,6 +45,9 @@ func SetupNamespaceDiscovery(ctx context.Context, mgr manager.Manager, selector 
 	}
 	_, err = inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
+			if ctx.Err() != nil {
+				return
+			}
 			ns := obj.(*corev1.Namespace)
 			if ls.Matches(labels.Set(ns.Labels)) {
 				bal.Add(ns.Name)
@@ -52,6 +55,9 @@ func SetupNamespaceDiscovery(ctx context.Context, mgr manager.Manager, selector 
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
+			if ctx.Err() != nil {
+				return
+			}
 			ns := obj.(*corev1.Namespace)
 			if ls.Matches(labels.Set(ns.Labels)) {
 				bal.Remove(ns.Name)
@@ -59,6 +65,9 @@ func SetupNamespaceDiscovery(ctx context.Context, mgr manager.Manager, selector 
 			}
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
+			if ctx.Err() != nil {
+				return
+			}
 			oldNs := oldObj.(*corev1.Namespace)
 			newNs := newObj.(*corev1.Namespace)
 			oldMatch := ls.Matches(labels.Set(oldNs.Labels))

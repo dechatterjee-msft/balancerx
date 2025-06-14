@@ -8,7 +8,7 @@ metadata:
   name: balancerpolicy-viewer-role
 rules:
 - apiGroups:
-  - balancerx.balancerx.io
+  - balancerx.io
   resources:
   - balancerpolicies
   verbs:
@@ -16,7 +16,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - balancerx.balancerx.io
+  - balancerx.io
   resources:
   - balancerpolicies/status
   verbs:

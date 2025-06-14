@@ -28,15 +28,9 @@ import (
 type BalancerPolicySpec struct {
 	// +kubebuilder:validation:MinLength=1
 	SourceNamespace string `json:"sourceNamespace"`
-
-	// Label selector for worker namespaces
-	// +kubebuilder:validation:MinLength=1
-	WorkerSelector string `json:"workerSelector"`
-
 	// Balancer strategy (ringhash|roundrobin|leastconn)
 	// +kubebuilder:validation:Enum=ringhash;roundrobin;leastconn
 	Balancer string `json:"balancer,omitempty"`
-
 	// GVR string: group/version/resource
 	// +kubebuilder:validation:Pattern=`^[^/]+/[^/]+/[^/]+$`
 	GVR string `json:"gvr"`
@@ -44,8 +38,8 @@ type BalancerPolicySpec struct {
 
 // BalancerPolicyStatus defines the observed state of BalancerPolicy
 type BalancerPolicyStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	WorkerSelector string             `json:"workerSelector,omitempty"`
+	Conditions     []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true

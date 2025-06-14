@@ -8,7 +8,7 @@ metadata:
   name: balancerpolicy-editor-role
 rules:
 - apiGroups:
-  - balancerx.balancerx.io
+  - balancerx.io
   resources:
   - balancerpolicies
   verbs:
@@ -20,7 +20,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - balancerx.balancerx.io
+  - balancerx.io
   resources:
   - balancerpolicies/status
   verbs:

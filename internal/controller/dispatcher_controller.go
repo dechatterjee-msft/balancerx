@@ -5,6 +5,7 @@ import (
 	"context"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -14,11 +15,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+type Config struct {
+	GVR                 schema.GroupVersionResource
+	SourceNS            string
+	WorkerSelector      string
+	LoadBalancingPolicy string
+}
+
 type Dispatcher struct {
 	client.Client
 	GVK      schema.GroupVersionKind
 	Balancer balancer.Balancer
 }
+
+var (
+	setupLog = ctrl.Log.WithName("balancer-setup")
+)
 
 func (d *Dispatcher) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithName("Dispatcher").WithValues("namespace", req.Namespace, "name", req.Name)
@@ -85,4 +97,18 @@ func SetupDispatcher(mgr manager.Manager, gvr schema.GroupVersionResource, bal b
 			GVK:      gvk,
 			Balancer: bal,
 		})
+}
+
+func Run(ctx context.Context, mgr manager.Manager, cfg Config, loadBalancer balancer.Balancer) error {
+	setupLog.Info("start BalancerX", "gvr", cfg.GVR)
+	if err := SetupDispatcher(mgr, cfg.GVR, loadBalancer); err != nil {
+		setupLog.Error(err, "unable to setup dispatcher")
+		return err
+	}
+	if err := SetupNamespaceDiscovery(ctx, mgr, cfg.WorkerSelector, loadBalancer, mgr.GetLogger()); err != nil {
+		setupLog.Error(err, "unable to setup namespace discovery")
+		return err
+	}
+	<-ctx.Done()
+	return nil
 }

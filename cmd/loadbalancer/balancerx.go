@@ -42,10 +42,7 @@ func main() {
 	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		LeaderElection:   true,
-		LeaderElectionID: "68f3f7e.balancerx.microsoft.com",
-	})
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		return

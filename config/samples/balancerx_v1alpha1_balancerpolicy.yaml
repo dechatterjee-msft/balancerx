@@ -1,9 +1,10 @@
-apiVersion: balancerx.balancerx.io/v1alpha1
+apiVersion: balancerx.io/v1alpha1
 kind: BalancerPolicy
 metadata:
-  labels:
-    app.kubernetes.io/name: balancerx
-    app.kubernetes.io/managed-by: kustomize
-  name: balancerpolicy-sample
+  name: jobs-dispatcher
 spec:
-  # TODO(user): Add fields here
+  sourceNamespace: inbox-jobs
+  # Load‑balancing strategy (ringhash | roundrobin | leastconn)
+  balancer: ringhash
+  # Target GVR (group/version/resource)
+  gvr: mygroup.io/v1/examplejobs
