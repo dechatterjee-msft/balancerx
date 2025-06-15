@@ -22,7 +22,7 @@ type Config struct {
 	LoadBalancingPolicy string
 }
 
-type Dispatcher struct {
+type LoadBalancingDispatcher struct {
 	client.Client
 	GVK      schema.GroupVersionKind
 	Balancer balancer.Balancer
@@ -32,8 +32,8 @@ var (
 	setupLog = ctrl.Log.WithName("balancer-setup")
 )
 
-func (d *Dispatcher) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	logger := log.FromContext(ctx).WithName("Dispatcher").WithValues("namespace", req.Namespace, "name", req.Name)
+func (d *LoadBalancingDispatcher) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	logger := log.FromContext(ctx).WithName("LoadBalancingDispatcher").WithValues("namespace", req.Namespace, "name", req.Name)
 	src := &unstructured.Unstructured{}
 	src.SetGroupVersionKind(d.GVK)
 	err := d.Get(ctx, req.NamespacedName, src)
@@ -92,7 +92,7 @@ func SetupDispatcher(ctx context.Context, mgr manager.Manager, gvr schema.GroupV
 	}
 	return builder.ControllerManagedBy(mgr).
 		For(u, builder.WithPredicates(pred)).
-		Complete(&Dispatcher{
+		Complete(&LoadBalancingDispatcher{
 			Client:   mgr.GetClient(),
 			GVK:      gvk,
 			Balancer: bal,
@@ -100,15 +100,17 @@ func SetupDispatcher(ctx context.Context, mgr manager.Manager, gvr schema.GroupV
 }
 
 func Run(ctx context.Context, mgr manager.Manager, cfg Config, loadBalancer balancer.Balancer) error {
-	setupLog.Info("start BalancerX", "gvr", cfg.GVR)
+	logger := log.FromContext(ctx)
+	logger.Info("start BalancerX...", "gvr", cfg.GVR)
 	if err := SetupDispatcher(ctx, mgr, cfg.GVR, loadBalancer); err != nil {
-		setupLog.Error(err, "unable to setup dispatcher")
-		return err
+		logger.Error(err, "unable to setup dispatcher")
+		return nil
 	}
-	if err := SetupNamespaceDiscovery(ctx, mgr, cfg.WorkerSelector, loadBalancer, mgr.GetLogger()); err != nil {
+	if err := SetupNamespaceDiscovery(ctx, mgr, cfg.WorkerSelector, loadBalancer, mgr.GetLogger(), cfg.GVR); err != nil {
 		setupLog.Error(err, "unable to setup namespace discovery")
-		return err
+		return nil
 	}
 	<-ctx.Done()
+	logger.Info("stopping BalancerX....", "gvr", cfg.GVR)
 	return nil
 }

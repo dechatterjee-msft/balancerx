@@ -131,6 +131,8 @@ spec:
                   - type
                   type: object
                 type: array
+              overallStatus:
+                type: string
               workerSelector:
                 type: string
             type: object

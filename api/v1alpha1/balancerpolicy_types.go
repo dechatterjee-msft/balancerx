@@ -40,6 +40,7 @@ type BalancerPolicySpec struct {
 type BalancerPolicyStatus struct {
 	WorkerSelector string             `json:"workerSelector,omitempty"`
 	Conditions     []metav1.Condition `json:"conditions,omitempty"`
+	OverallStatus  string             `json:"overallStatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

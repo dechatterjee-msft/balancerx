@@ -1,21 +1,22 @@
 package controller
 
 import (
+	balancerxv1alpha1 "balancerx/api/v1alpha1"
 	"balancerx/internal/balancer"
 	"balancerx/internal/util"
 	"context"
+	"fmt"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"strings"
-	"sync"
-
-	balancerxv1alpha1 "balancerx/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sync"
 )
 
 // BalancerPolicyReconciler reconciles a BalancerPolicy object
@@ -31,10 +32,12 @@ type BalancerPolicyReconciler struct {
 	cancel map[string]context.CancelFunc // active dispatchers
 }
 
+const FinalizerName = "balancerx.io/finalizer"
+
 const (
-	PolicyReadyCondition = "Ready"     // dispatcher running
-	CollisionCondition   = "Collision" // src or worker overlap
-	InvalidSpecCondition = "InvalidSpec"
+	CondReady     = "Ready"
+	CondInvalid   = "InvalidSpec"
+	CondCollision = "Collision"
 )
 
 //+kubebuilder:rbac:groups=balancerx.io,resources=balancerpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -43,100 +46,133 @@ const (
 
 func (r *BalancerPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling BalancerPolicy", "name", req.Name, "namespace", req.Namespace)
-	// Fetch the BalancerPolicy instance
-	balancerPolicy := &balancerxv1alpha1.BalancerPolicy{}
-	if err := r.Get(ctx, req.NamespacedName, balancerPolicy); err != nil {
-		logger.Error(err, "Failed to get BalancerPolicy", "name", req.Name, "namespace", req.Namespace)
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+	//  Fetch object or handle delete ====================================
+	var pol balancerxv1alpha1.BalancerPolicy
+	if err := r.Get(ctx, req.NamespacedName, &pol); err != nil {
+		if errors.IsNotFound(err) {
+			r.stop(req.Name)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
-	// Check if it is duplicate policy and user is using the same spec and balancer is already running.
-	specHash := util.HashSpec(balancerPolicy.Spec)
-	if balancerPolicy.Annotations == nil {
-		balancerPolicy.Annotations = map[string]string{}
+	if pol.Annotations == nil {
+		pol.Annotations = map[string]string{}
 	}
-	// If hash unchanged AND dispatcher already running, skip.
-	if existing, ok := balancerPolicy.Annotations["balancerx/spec-hash"]; ok {
-		if existing == specHash {
-			r.mu.Lock()
-			_, running := r.cancel[balancerPolicy.Name]
-			r.mu.Unlock()
-			if running {
-				return ctrl.Result{}, nil // no change
+	if pol.ObjectMeta.DeletionTimestamp != nil {
+		// ensure dispatcher is stopped
+		r.stop(pol.Name)
+		// remove finalizer, then update
+		if controllerutil.ContainsFinalizer(&pol, FinalizerName) {
+			controllerutil.RemoveFinalizer(&pol, FinalizerName)
+			if err := r.Update(ctx, &pol); err != nil {
+				return ctrl.Result{}, err
 			}
 		}
+		return ctrl.Result{}, nil
 	}
-	// Validate selector and GVR
-	labelSelector := util.MakeSelector(req.Name, balancerPolicy.Spec.GVR)
-	_, err := labels.Parse(labelSelector)
-	if err != nil {
-		logger.Error(err, "invalid workerSelector")
-		return ctrl.Result{
-			Requeue: false,
-		}, nil
-	}
-
-	gvrParts := strings.Split(balancerPolicy.Spec.GVR, "/")
-	if len(gvrParts) != 3 {
-		logger.Info("invalid GVR format", "gvr", balancerPolicy.Spec.GVR)
-		return ctrl.Result{
-			Requeue: false,
-		}, nil
-	}
-
-	gvr := schema.GroupVersionResource{Group: gvrParts[0], Version: gvrParts[1], Resource: gvrParts[2]}
-	lb, err := balancer.NewLoadBalancingFactory(balancerPolicy.Spec.Balancer)
-	if err != nil {
-		return ctrl.Result{
-			Requeue: false,
-		}, err
-	}
-
-	if balancerPolicy.Status.WorkerSelector == "" {
-		// first time: just write selector and requeue
-		balancerPolicy.Status.WorkerSelector = labelSelector
-		if err = r.Status().Update(ctx, balancerPolicy); err != nil {
+	// ensure finalizer present for future graceful delete
+	if !controllerutil.ContainsFinalizer(&pol, FinalizerName) {
+		controllerutil.AddFinalizer(&pol, FinalizerName)
+		if err := r.Update(ctx, &pol); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil // do not start dispatcher yet
+		// requeue to process rest on next pass
+		//	return ctrl.Result{}, nil
 	}
 
-	// Restart dispatcher for this policy
+	// -----------------------------------------------------------------
+	//  Validate spec (GVR format & collisions)
+	// -----------------------------------------------------------------
+	specHash := util.HashSpec(pol.Spec)
+	if existing := pol.Annotations["balancerx/spec-hash"]; existing == specHash && r.isRunning(pol.Name) {
+		logger.Info("skipping reconcile, spec unchanged and dispatcher running")
+		return ctrl.Result{
+			Requeue: false,
+		}, nil
+	}
+
+	if cond := r.validateSpec(ctx, &pol); cond != nil {
+		util.SetCondition(&pol.Status.Conditions, CondInvalid, metav1.ConditionTrue, cond.Reason, cond.Message, pol.Generation)
+		pol.Status.OverallStatus = "Failed"
+		logger.Info("validation error occurred", "reason", cond.Reason, "message", cond.Message)
+		_ = r.Status().Update(ctx, &pol)
+		r.stop(pol.Name)
+		return ctrl.Result{
+			Requeue: false,
+		}, nil
+	}
+	util.ClearCondition(&pol.Status.Conditions, CondInvalid)
+
+	// -----------------------------------------------------------------
+	//  Validate balancer type
+	// -----------------------------------------------------------------
+	balancerImpl, err := balancer.NewLoadBalancingFactory(pol.Spec.Balancer)
+	if err != nil {
+		pol.Status.OverallStatus = "Failed"
+		util.SetCondition(&pol.Status.Conditions, CondInvalid, metav1.ConditionTrue, "BadBalancer", err.Error(), pol.Generation)
+		_ = r.Status().Update(ctx, &pol)
+		r.stop(pol.Name)
+		return ctrl.Result{}, nil
+	}
+
+	// -----------------------------------------------------------------
+	// Ensure workerSelector in status (first run)
+	// -----------------------------------------------------------------
+	if pol.Status.WorkerSelector == "" {
+		pol.Status.WorkerSelector = util.MakeSelector(pol.Spec.GVR)
+		pol.Status.OverallStatus = "Pending"
+		if err := r.Status().Update(ctx, &pol); err != nil {
+			pol.Status.OverallStatus = "Failed"
+			logger.Error(err, "unable to update status")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// -----------------------------------------------------------------
+	// (Re)start dispatcher
+	// -----------------------------------------------------------------
+
+	r.stop(pol.Name)
 	ctxSub, cancel := context.WithCancel(ctx)
 	r.mu.Lock()
 	if r.cancel == nil {
-		r.cancel = make(map[string]context.CancelFunc)
+		r.cancel = map[string]context.CancelFunc{}
 	}
-	r.cancel[balancerPolicy.Name] = cancel
+	r.cancel[pol.Name] = cancel
 	r.mu.Unlock()
+
 	cfg := Config{
-		GVR:                 gvr,
-		SourceNS:            balancerPolicy.Spec.SourceNamespace,
-		WorkerSelector:      labelSelector,
-		LoadBalancingPolicy: balancerPolicy.Spec.Balancer,
+		GVR:                 util.ParseGVR(pol.Spec.GVR),
+		SourceNS:            pol.Spec.SourceNamespace,
+		WorkerSelector:      pol.Status.WorkerSelector,
+		LoadBalancingPolicy: pol.Spec.Balancer,
 	}
-	if err := r.mgr.Add(manager.RunnableFunc(func(parentCtx context.Context) error {
-		return Run(ctxSub, r.mgr, cfg, lb)
+
+	if err := r.mgr.Add(manager.RunnableFunc(func(_ context.Context) error {
+		return Run(ctxSub, r.mgr, cfg, balancerImpl)
 	})); err != nil {
-		logger.Error(err, "failed to add runnable")
+		logger.Error(err, "unable to start load balancer dispatcher")
+		pol.Status.OverallStatus = "Failed"
+		util.SetCondition(&pol.Status.Conditions, CondReady, metav1.ConditionFalse, "StartFailed", err.Error(), pol.Generation)
+		_ = r.Status().Update(ctx, &pol)
+		return ctrl.Result{
+			Requeue: false,
+		}, nil
+	}
+
+	// -----------------------------------------------------------------
+	// Persist annotation & Ready condition
+	// -----------------------------------------------------------------
+
+	pol.Annotations["balancerx/spec-hash"] = specHash
+	if err := r.Update(ctx, &pol); err != nil {
 		return ctrl.Result{}, err
 	}
-	// Update the policy status with the new spec hash and worker selector
-	balancerPolicy.Annotations["balancerx/spec-hash"] = specHash
-	if err = r.Patch(ctx, balancerPolicy, nil); err != nil {
-		return ctrl.Result{}, err
-	}
-	if balancerPolicy.Status.WorkerSelector != labelSelector {
-		balancerPolicy.Status.WorkerSelector = labelSelector
-		util.ClearCondition(&balancerPolicy.Status.Conditions, CollisionCondition)
-		util.SetCondition(&balancerPolicy.Status.Conditions, PolicyReadyCondition,
-			metav1.ConditionTrue, "DispatcherRunning",
-			"dispatcher active",
-			balancerPolicy.Generation)
-		if err := r.Status().Update(ctx, balancerPolicy); err != nil {
-			return ctrl.Result{}, err // retry
-		}
-	}
+	pol.Status.OverallStatus = "Running"
+	util.SetCondition(&pol.Status.Conditions, CondReady, metav1.ConditionTrue, "DispatcherRunning", "dispatcher active", pol.Generation)
+	_ = r.Status().Update(ctx, &pol)
+
+	logger.Info("dispatcher (re)started", "policy", pol.Name)
 	return ctrl.Result{
 		Requeue: false,
 	}, nil
@@ -146,6 +182,64 @@ func (r *BalancerPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 func (r *BalancerPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.mgr = mgr
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&balancerxv1alpha1.BalancerPolicy{}).
-		Complete(r)
+		For(&balancerxv1alpha1.BalancerPolicy{}).WithEventFilter(
+		predicate.Funcs{
+			CreateFunc: func(createEvent event.CreateEvent) bool {
+				return true
+			},
+			DeleteFunc: func(e event.DeleteEvent) bool { return true }},
+	).Complete(r)
+}
+
+func (r *BalancerPolicyReconciler) stop(name string) {
+	r.mu.Lock()
+	if c, ok := r.cancel[name]; ok {
+		c()
+		delete(r.cancel, name)
+	}
+	r.mu.Unlock()
+}
+
+func (r *BalancerPolicyReconciler) validateSpec(ctx context.Context, pol *balancerxv1alpha1.BalancerPolicy) *metav1.Condition {
+	// validate GVR string format
+	if !util.IsValidGVR(pol.Spec.GVR) {
+		return &metav1.Condition{Reason: "BadGVR", Message: "GVR must be group/version/resource"}
+	}
+
+	// determine worker namespaces selected by THIS policy
+	workerSel := util.MakeSelector(pol.Spec.GVR)
+	workerSet, _ := util.ListWorkerNS(ctx, r.Client, workerSel)
+
+	// scan all other BalancerPolicies
+	var list balancerxv1alpha1.BalancerPolicyList
+	if err := r.List(ctx, &list); err != nil {
+		return &metav1.Condition{Reason: "ListError", Message: err.Error()}
+	}
+
+	for _, p := range list.Items {
+		if p.Name == pol.Name {
+			continue
+		}
+		// give priority to older policies
+		if p.CreationTimestamp.Before(&pol.CreationTimestamp) {
+			if p.Spec.SourceNamespace == pol.Spec.SourceNamespace {
+				return &metav1.Condition{Type: CondCollision, Reason: "SourceNamespaceInUse", Message: fmt.Sprintf("namespace %s already used by %s", p.Spec.SourceNamespace, p.Name)}
+			}
+			if p.Status.WorkerSelector != "" {
+				otherSet, _ := util.ListWorkerNS(ctx, r.Client, p.Status.WorkerSelector)
+				if workerSet.Intersection(otherSet).Len() > 0 {
+					return &metav1.Condition{Type: CondCollision, Reason: "WorkerOverlap", Message: "worker namespace overlap"}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ----- utilities ------------------------------------------------------------
+func (r *BalancerPolicyReconciler) isRunning(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.cancel[name]
+	return ok
 }
