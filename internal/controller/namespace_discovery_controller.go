@@ -17,7 +17,7 @@ import (
 // add/update/delete events. Call this *once* during startup *before*
 // mgr.Start().
 //
-//	selector := "balancerx/worker=true"
+//	selector := "balancerx/worker=Hash(GVR + Name)"
 //	if err := discovery.SetupNamespaceDiscovery(mgr, selector, bal, logger);
 //
 // The function:

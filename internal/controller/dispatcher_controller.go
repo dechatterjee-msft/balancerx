@@ -73,7 +73,7 @@ func (d *Dispatcher) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	return reconcile.Result{}, nil
 }
 
-func SetupDispatcher(mgr manager.Manager, gvr schema.GroupVersionResource, bal balancer.Balancer) error {
+func SetupDispatcher(ctx context.Context, mgr manager.Manager, gvr schema.GroupVersionResource, bal balancer.Balancer) error {
 	u := &unstructured.Unstructured{}
 	restMapper := mgr.GetRESTMapper()
 	gvk, err := restMapper.KindFor(gvr)
@@ -101,7 +101,7 @@ func SetupDispatcher(mgr manager.Manager, gvr schema.GroupVersionResource, bal b
 
 func Run(ctx context.Context, mgr manager.Manager, cfg Config, loadBalancer balancer.Balancer) error {
 	setupLog.Info("start BalancerX", "gvr", cfg.GVR)
-	if err := SetupDispatcher(mgr, cfg.GVR, loadBalancer); err != nil {
+	if err := SetupDispatcher(ctx, mgr, cfg.GVR, loadBalancer); err != nil {
 		setupLog.Error(err, "unable to setup dispatcher")
 		return err
 	}
