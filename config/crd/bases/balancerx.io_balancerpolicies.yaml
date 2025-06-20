@@ -48,15 +48,20 @@ spec:
                 - roundrobin
                 - leastconn
                 type: string
-              gvr:
-                description: 'GVR string: group/version/resource'
-                pattern: ^[^/]+/[^/]+/[^/]+$
+              customSelector:
+                description: Custom Selector to select workers for the policy e.g.
+                  Subscription,ARM ID, RG.
+                items:
+                  type: string
+                type: array
+              group:
                 type: string
+              replicas:
+                type: integer
               sourceNamespace:
                 minLength: 1
                 type: string
             required:
-            - gvr
             - sourceNamespace
             type: object
           status:

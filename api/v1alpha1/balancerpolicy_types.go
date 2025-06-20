@@ -31,9 +31,10 @@ type BalancerPolicySpec struct {
 	// Balancer strategy (ringhash|roundrobin|leastconn)
 	// +kubebuilder:validation:Enum=ringhash;roundrobin;leastconn
 	Balancer string `json:"balancer,omitempty"`
-	// GVR string: group/version/resource
-	// +kubebuilder:validation:Pattern=`^[^/]+/[^/]+/[^/]+$`
-	GVR string `json:"gvr"`
+	Group    string `json:"group,omitempty"`
+	// Custom Selector to select workers for the policy e.g. Subscription,ARM ID, RG.
+	CustomSelector []string `json:"customSelector,omitempty"`
+	Replicas       int      `json:"replicas,omitempty"`
 }
 
 // BalancerPolicyStatus defines the observed state of BalancerPolicy

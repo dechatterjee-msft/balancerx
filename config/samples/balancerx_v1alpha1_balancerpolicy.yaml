@@ -1,10 +1,10 @@
 apiVersion: balancerx.io/v1alpha1
 kind: BalancerPolicy
 metadata:
-  name: jobs-dispatcher-8
+  name: cr-cloud-operator-1
 spec:
-  sourceNamespace: inbox-jobs-9
+  sourceNamespace: cloud-operator-cr-queue
   # Load‑balancing strategy (ringhash | roundrobin | leastconn)
-  balancer: roundrobin
-  # Target GVR (group/version/resource)
-  gvr: demo.bastion.io/v1/tasks
+  balancer: ringhash
+  replicas: 4
+  group: mycompany.io

@@ -1,0 +1,37 @@
+# .goreleaser.yaml
+
+project_name: balancerx
+
+builds:
+  - id: balancerx
+    main: ./cmd/main.go  # adjust if your entry point is different
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+dockers:
+  - image_templates:
+      - "ghcr.io/{{ .GitRepo }}/balancerx:{{ .Tag }}"
+      - "ghcr.io/{{ .GitRepo }}/balancerx:latest"
+    dockerfile: Dockerfile
+    goos: linux
+    goarch: amd64
+
+release:
+  github:
+    owner: your-github-username
+    name: balancerx
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: git
+

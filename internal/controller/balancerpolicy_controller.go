@@ -91,17 +91,17 @@ func (r *BalancerPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}, nil
 	}
 
-	if cond := r.validateSpec(ctx, &pol); cond != nil {
-		util.SetCondition(&pol.Status.Conditions, CondInvalid, metav1.ConditionTrue, cond.Reason, cond.Message, pol.Generation)
-		pol.Status.OverallStatus = "Failed"
-		logger.Info("validation error occurred", "reason", cond.Reason, "message", cond.Message)
-		_ = r.Status().Update(ctx, &pol)
-		r.stop(pol.Name)
-		return ctrl.Result{
-			Requeue: false,
-		}, nil
-	}
-	util.ClearCondition(&pol.Status.Conditions, CondInvalid)
+	//if cond := r.validateSpec(ctx, &pol); cond != nil {
+	//	util.SetCondition(&pol.Status.Conditions, CondInvalid, metav1.ConditionTrue, cond.Reason, cond.Message, pol.Generation)
+	//	pol.Status.OverallStatus = "Failed"
+	//	logger.Info("validation error occurred", "reason", cond.Reason, "message", cond.Message)
+	//	_ = r.Status().Update(ctx, &pol)
+	//	r.stop(pol.Name)
+	//	return ctrl.Result{
+	//		Requeue: false,
+	//	}, nil
+	//}
+	//util.ClearCondition(&pol.Status.Conditions, CondInvalid)
 
 	// -----------------------------------------------------------------
 	//  Validate balancer type
@@ -119,7 +119,7 @@ func (r *BalancerPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Ensure workerSelector in status (first run)
 	// -----------------------------------------------------------------
 	if pol.Status.WorkerSelector == "" {
-		pol.Status.WorkerSelector = util.MakeSelector(pol.Spec.GVR)
+		pol.Status.WorkerSelector = util.MakeSelector(pol.Spec.SourceNamespace, pol.Spec.Group, pol.Spec.CustomSelector)
 		pol.Status.OverallStatus = "Pending"
 		if err := r.Status().Update(ctx, &pol); err != nil {
 			pol.Status.OverallStatus = "Failed"
@@ -142,10 +142,12 @@ func (r *BalancerPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	r.mu.Unlock()
 
 	cfg := Config{
-		GVR:                 util.ParseGVR(pol.Spec.GVR),
+		Group:               pol.Spec.Group,
 		SourceNS:            pol.Spec.SourceNamespace,
 		WorkerSelector:      pol.Status.WorkerSelector,
 		LoadBalancingPolicy: pol.Spec.Balancer,
+		Replicas:            pol.Spec.Replicas,
+		PolicyName:          pol.Name,
 	}
 
 	if err := r.mgr.Add(manager.RunnableFunc(func(_ context.Context) error {
@@ -201,13 +203,13 @@ func (r *BalancerPolicyReconciler) stop(name string) {
 }
 
 func (r *BalancerPolicyReconciler) validateSpec(ctx context.Context, pol *balancerxv1alpha1.BalancerPolicy) *metav1.Condition {
-	// validate GVR string format
-	if !util.IsValidGVR(pol.Spec.GVR) {
-		return &metav1.Condition{Reason: "BadGVR", Message: "GVR must be group/version/resource"}
-	}
+	//// validate GVR string format
+	//if !util.IsValidGVR(pol.Spec.GVR) {
+	//	return &metav1.Condition{Reason: "BadGVR", Message: "GVR must be group/version/resource"}
+	//}
 
 	// determine worker namespaces selected by THIS policy
-	workerSel := util.MakeSelector(pol.Spec.GVR)
+	workerSel := util.MakeSelector(pol.Spec.SourceNamespace, pol.Spec.Group, pol.Spec.CustomSelector)
 	workerSet, _ := util.ListWorkerNS(ctx, r.Client, workerSel)
 
 	// scan all other BalancerPolicies

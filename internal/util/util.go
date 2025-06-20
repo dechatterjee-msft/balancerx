@@ -17,12 +17,16 @@ import (
 )
 
 func HashSpec(sp balancerxv1alpha1.BalancerPolicySpec) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", sp.SourceNamespace, sp.GVR, sp.Balancer)))
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", sp.SourceNamespace, sp.Group, sp.Balancer)))
 	return hex.EncodeToString(h[:8])
 }
 
-func MakeSelector(gvr string) string {
-	h := sha256.Sum256([]byte(gvr))
+func MakeSelector(srcns, gvr string, customSelector []string) string {
+	flattenSelector := ""
+	if customSelector != nil {
+		flattenSelector = strings.Join(customSelector, ",")
+	}
+	h := sha256.Sum256([]byte(gvr + "|" + flattenSelector + "|" + srcns))
 	return fmt.Sprintf("balancer/worker=%s", hex.EncodeToString(h[:6])) // 12‑hex chars
 }
 
